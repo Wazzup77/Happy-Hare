@@ -1137,9 +1137,10 @@ class Mmu:
         self.led_manager.gate_map_changed(None) # Force LED update
 
     # Helper to determine purge volume for toolchange
-    def _get_purge_volume(self, from_tool, to_tool):
+    def _calc_purge_volume(self, from_tool, to_tool):
         fil_diameter = 1.75
         volume = 0.
+
         if to_tool >= 0:
             slicer_purge_volumes = self.slicer_tool_map['purge_volumes']
             if slicer_purge_volumes:
@@ -1148,8 +1149,9 @@ class Mmu:
                 else:
                     # Assume worse case because we don't know from_tool
                     volume = max(row[to_tool] for row in slicer_purge_volumes)
-            # Add volume of residual filament
-            volume += math.pi * ((fil_diameter / 2) ** 2) * (self.filament_remaining + self.toolhead_residual_filament)
+
+        # Always add volume of residual filament (cut fragment and bit always left in the hotend)
+        volume += math.pi * ((fil_diameter / 2) ** 2) * (self.filament_remaining + self.toolhead_residual_filament)
         return volume
 
     # Generate purge matrix based on filament colors
@@ -5268,11 +5270,12 @@ class Mmu:
         if gcode_macro:
             self.log_info("Purging...")
             with self._wrap_extruder_current(self.extruder_purge_current, "for filament purge"):
-                # We expect the macro to decide on the purge volume, but expect to be based on this. If not in a
-                # toolchange toolchange_purge_volume will be 0 and macro may need to perform worse case purge
-                msg = "Calculated purge (combination of):\n"
-                msg += "extruder_filament_remaining: %.1fmm\n" % (self.filament_remaining + self.toolhead_residual_filament)
-                msg += "toolchange_purge_volume: %.1fmm%s" % (self.toolchange_purge_volume, UI_CUBE)
+                # The macro to decide on the purge volume, but expect to be based on this.
+                msg = "Suggested purge volume of %.1fmm%s\n" % (self.toolchange_purge_volume, UI_CUBE)
+                msg += "Calculated from: "
+                msg += "toolhead_residual_filament: %.1fmm, " % self.toolhead_residual_filament
+                msg += "filament_remaining (cut fragment): %.1fmm " % self.filament_remaining
+                msg += "and slicer purge volume for toolchange"
                 self.log_debug(msg)
                 self.wrap_gcode_command(self.purge_macro, exception=True, wait=True)
 
@@ -5995,25 +5998,33 @@ class Mmu:
             self._restore_tool_override(tool)
 
     # Primary method to select and loads tool. Assumes we are unloaded.
-    def _select_and_load_tool(self, tool, purge=None):
-        self.log_debug('Loading tool %s...' % self.selected_tool_string(tool))
-        self.select_tool(tool)
-        gate = self.ttg_map[tool] if tool >= 0 else self.gate_selected
-        if self.gate_status[gate] == self.GATE_EMPTY:
-            if self.endless_spool_enabled and self.endless_spool_on_load:
-                next_gate, msg = self._get_next_endless_spool_gate(tool, gate)
-                if next_gate == -1:
-                    raise MmuError("Gate %d is empty!\nNo alternatives gates available after checking %s" % (gate, msg))
+    def _select_and_load_tool(self, tool, purge=None, prev_tool=-1):
 
-                self.log_error("Gate %d is empty! Checking for alternative gates %s" % (gate, msg))
-                self.log_info("Remapping %s to gate %d" % (self.selected_tool_string(tool), next_gate))
-                self._remap_tool(tool, next_gate)
-                self.select_tool(tool)
-            else:
-                raise MmuError("Gate %d is empty (and EndlessSpool on load is disabled)\nLoad gate, remap tool to another gate or correct state with 'MMU_CHECK_GATE GATE=%d' or 'MMU_GATE_MAP GATE=%d AVAILABLE=1'" % (gate, gate, gate))
+        try:
+            # Determine purge volume for toolchange/load. Valid only during toolchange/load operation
+            self.toolchange_purge_volume = self._calc_purge_volume(prev_tool, tool)
 
-        self.load_sequence(purge=purge)
-        self._restore_tool_override(self.tool_selected) # Restore M220 and M221 overrides
+            self.log_debug('Loading tool %s...' % self.selected_tool_string(tool))
+            self.select_tool(tool)
+            gate = self.ttg_map[tool] if tool >= 0 else self.gate_selected
+            if self.gate_status[gate] == self.GATE_EMPTY:
+                if self.endless_spool_enabled and self.endless_spool_on_load:
+                    next_gate, msg = self._get_next_endless_spool_gate(tool, gate)
+                    if next_gate == -1:
+                        raise MmuError("Gate %d is empty!\nNo alternatives gates available after checking %s" % (gate, msg))
+
+                    self.log_error("Gate %d is empty! Checking for alternative gates %s" % (gate, msg))
+                    self.log_info("Remapping %s to gate %d" % (self.selected_tool_string(tool), next_gate))
+                    self._remap_tool(tool, next_gate)
+                    self.select_tool(tool)
+                else:
+                    raise MmuError("Gate %d is empty (and EndlessSpool on load is disabled)\nLoad gate, remap tool to another gate or correct state with 'MMU_CHECK_GATE GATE=%d' or 'MMU_GATE_MAP GATE=%d AVAILABLE=1'" % (gate, gate, gate))
+
+            self.load_sequence(purge=purge)
+            self._restore_tool_override(self.tool_selected) # Restore M220 and M221 overrides
+
+        finally:
+            self.toolchange_purge_volume = 0.
 
     # Primary method to unload current tool but retain selection
     def _unload_tool(self, form_tip=None, prev_tool=None):
@@ -6512,9 +6523,6 @@ class Mmu:
                             self._note_toolchange(self.selected_tool_string(tool))
                             return
 
-                        # Determine purge volume for current toolchange. Valid only during toolchange operation
-                        self.toolchange_purge_volume = self._get_purge_volume(self.tool_selected, tool)
-
                         # Ok, now ready to park and perform the swap
                         self._next_tool = tool # Valid only during the change process - cleared in _continue_after()
                         self.last_statistics = {}
@@ -6532,7 +6540,7 @@ class Mmu:
                                 try:
                                     if self.filament_pos != self.FILAMENT_POS_UNLOADED:
                                         self._unload_tool(form_tip=do_form_tip, prev_tool=prev_tool)
-                                    self._select_and_load_tool(tool, purge=do_purge)
+                                    self._select_and_load_tool(tool, purge=do_purge, prev_tool=prev_tool)
                                     break
                                 except MmuError as ee:
                                     if i == attempts - 1:
@@ -6558,8 +6566,6 @@ class Mmu:
         except MmuError as ee:
             self.handle_mmu_error(str(ee))
 
-        finally:
-            self.toolchange_purge_volume = 0.
 
     cmd_MMU_LOAD_help = "Loads filament on current tool/gate or optionally loads just the extruder for bypass or recovery usage (EXTRUDER_ONLY=1)"
     def cmd_MMU_LOAD(self, gcmd):
@@ -6592,6 +6598,7 @@ class Mmu:
                         self._save_toolhead_position_and_park('load')
                         if self.tool_selected == self.TOOL_GATE_UNKNOWN:
                             self.log_error("Selected gate is not mapped to any tool. Will load filament but be sure to use MMU_TTG_MAP to assign tool")
+
                         self._select_and_load_tool(self.tool_selected, purge=do_purge)
                         self._persist_gate_statistics()
                         self._continue_after('load', restore=restore)
@@ -6602,6 +6609,7 @@ class Mmu:
             self.handle_mmu_error("%s.\nOccured when loading tool: %s" % (str(ee), self._last_toolchange))
             if self.tool_selected == self.TOOL_GATE_BYPASS:
                 self._set_filament_pos_state(self.FILAMENT_POS_UNKNOWN)
+
 
     cmd_MMU_UNLOAD_help = "Unloads filament and parks it at the gate or optionally unloads just the extruder (EXTRUDER_ONLY=1)"
     def cmd_MMU_UNLOAD(self, gcmd):
@@ -7403,7 +7411,7 @@ class Mmu:
                     self._eject_from_gate() # Push completely out of gate
                     self.select_gate(next_gate) # Necessary if unloaded to waste gate
                     self._remap_tool(self.tool_selected, next_gate)
-                    self._select_and_load_tool(self.tool_selected, purge=self.PURGE_STANDALONE) # if user has set up standalone purging, respect option and purge.
+                    self._select_and_load_tool(self.tool_selected, purge=self.PURGE_STANDALONE, prev_tool=self.tool_selected) # if user has set up standalone purging, respect option and purge.
 
                     self._continue_after("endless_spool")
                     self.pause_resume.send_resume_command() # Undo what runout sensor handling did
@@ -8619,7 +8627,7 @@ class Mmu:
                                             self._note_toolchange("> %s" % self.selected_tool_string(tool=tool_selected))
                                             self.last_statistics = {}
                                             self._save_toolhead_position_and_park('load')
-                                            self._select_and_load_tool(tool_selected, purge=self.PURGE_STANDALONE) # if user has set up standalone purging, respect option and purge.
+                                            self._select_and_load_tool(tool_selected, purge=self.PURGE_STANDALONE, prev_tool=tool_selected) # If user has set up standalone purging, respect option and purge.
                                             self._persist_gate_statistics()
                                             self._continue_after('load')
                                         else:
