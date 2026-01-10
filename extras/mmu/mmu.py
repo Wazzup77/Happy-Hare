@@ -582,7 +582,7 @@ class Mmu:
         self.gcode.register_command('MMU_MOTORS_OFF', self.cmd_MMU_MOTORS_OFF, desc = self.cmd_MMU_MOTORS_OFF_help)
         self.gcode.register_command('MMU_MOTORS_ON', self.cmd_MMU_MOTORS_ON, desc = self.cmd_MMU_MOTORS_ON_help)
         self.gcode.register_command('MMU_SYNC_GEAR_MOTOR', self.cmd_MMU_SYNC_GEAR_MOTOR, desc=self.cmd_MMU_SYNC_GEAR_MOTOR_help)
-        
+
         # Core MMU functionality
         self.gcode.register_command('MMU', self.cmd_MMU, desc = self.cmd_MMU_help)
         self.gcode.register_command('MMU_LOG', self.cmd_MMU_LOG, desc = self.cmd_MMU_LOG_help)
@@ -2728,13 +2728,13 @@ class Mmu:
             and return moving average
             """
             sensor = self.sensor_manager.all_sensors.get(self.SENSOR_PROPORTIONAL)
-            
-            k = 0.1 # 1st order,low pass filter coefficient, 0.1 for 10 samples 
+
+            k = 0.1 # 1st order,low pass filter coefficient, 0.1 for 10 samples
             avg = sensor.get_status(0).get('value_raw', None)
 
             for _ in range(int(max(1, n-1))):
                 self.movequeues_dwell(dwell_s)
-                raw = sensor.get_status(0).get('value_raw', None) 
+                raw = sensor.get_status(0).get('value_raw', None)
                 if raw is None or not isinstance(raw, float):
                     return None
                 avg += k * (raw - avg) # 1st order low pass filter
@@ -3995,6 +3995,18 @@ class Mmu:
         except MmuError as ee:
             self.handle_mmu_error(str(ee))
 
+    cmd_MMU_TEST_PURGE_help = "Convenience macro for calling the standalone purging macro"
+    def cmd_MMU_TEST_PURGE(self, gcmd):
+        self.log_to_file(gcmd.get_commandline())
+        if self.check_if_disabled(): return
+        reset = bool(gcmd.get_int('RESET', 0, minval=0, maxval=1))
+        show = bool(gcmd.get_int('SHOW', 0, minval=0, maxval=1))
+        run = bool(gcmd.get_int('RUN', 1, minval=0, maxval=1))
+
+        with self.wrap_action(self.ACTION_PURGING):
+            self.purge_standalone()
+# PAUL
+
     cmd_MMU_STEP_LOAD_GATE_help = "User composable loading step: Move filament from gate to start of bowden"
     def cmd_MMU_STEP_LOAD_GATE(self, gcmd):
         self.log_to_file(gcmd.get_commandline())
@@ -4950,7 +4962,7 @@ class Mmu:
                             self.wrap_gcode_command(self.post_load_macro, exception=True, wait=True)
                     else:
                         self.wrap_gcode_command(self.post_load_macro, exception=True, wait=True)
-            
+
         except MmuError as ee:
             self._track_gate_statistics('load_failures', self.gate_selected)
             raise MmuError("Load sequence failed because:\n%s" % (str(ee)))
@@ -4993,7 +5005,7 @@ class Mmu:
         if self.filament_pos == self.FILAMENT_POS_UNLOADED:
             self.log_debug("Filament already ejected")
             return
-            
+
         try:
             if not extruder_only:
                 current_action = self._set_action(self.ACTION_UNLOADING)
@@ -5001,7 +5013,7 @@ class Mmu:
             # Deactivate spool immediately before tip forming/cutting
             # Tip forming/cutting macros use the extruder to execute, hence
             # any retraction / de retraction moves are accounted in Spoolman.
-            # By de-activating early, the retraction performed from the macro 
+            # By de-activating early, the retraction performed from the macro
             # is deliberately not accounted in spoolman
             self._spoolman_activate_spool(0)
 
@@ -5266,18 +5278,21 @@ class Mmu:
         return park_pos, filament_remaining, reported
 
     def purge_standalone(self):
-        gcode_macro = self.printer.lookup_object("gcode_macro %s" % self.purge_macro, None)
-        if gcode_macro:
-            self.log_info("Purging...")
-            with self._wrap_extruder_current(self.extruder_purge_current, "for filament purge"):
-                # The macro to decide on the purge volume, but expect to be based on this.
-                msg = "Suggested purge volume of %.1fmm%s\n" % (self.toolchange_purge_volume, UI_CUBE)
-                msg += "Calculated from: "
-                msg += "toolhead_residual_filament: %.1fmm, " % self.toolhead_residual_filament
-                msg += "filament_remaining (cut fragment): %.1fmm " % self.filament_remaining
-                msg += "and slicer purge volume for toolchange"
-                self.log_debug(msg)
-                self.wrap_gcode_command(self.purge_macro, exception=True, wait=True)
+        if self.purge_macro:
+            gcode_macro = self.printer.lookup_object("gcode_macro %s" % self.purge_macro, None)
+            if gcode_macro:
+                self.log_info("Purging...")
+                with self._wrap_extruder_current(self.extruder_purge_current, "for filament purge"):
+                    # The macro to decide on the purge volume, but expect to be based on this.
+                    msg = "Suggested purge volume of %.1fmm%s\n" % (self.toolchange_purge_volume, UI_CUBE)
+                    msg += "Calculated from: "
+                    msg += "toolhead_residual_filament: %.1fmm, " % self.toolhead_residual_filament
+                    msg += "filament_remaining (cut fragment): %.1fmm " % self.filament_remaining
+                    msg += "and slicer purge volume for toolchange"
+                    self.log_debug(msg)
+                    self.wrap_gcode_command(self.purge_macro, exception=True, wait=True)
+            else:
+                self.log_warning("Purge macro %s not found" % self.purge_macro)
 
 
 #################################
