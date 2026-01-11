@@ -34,18 +34,21 @@ class MmuEnvironmentManager:
 
         # Process config
         self.heater_default_dry_temp = self.mmu.config.getfloat('heater_default_dry_temp', 60, above=0.)
-        self.heater_default_dry_time = self.mmu.config.getfloat('heater_default_time', 60, above=0.)
+        self.heater_default_dry_time = self.mmu.config.getfloat('heater_default_dry_time', 60, above=0.)
         self.heater_default_humidity = self.mmu.config.getfloat('heater_default_humidity', 45, above=0.)
         self.heater_max_wattage      = self.mmu.config.getint('heater_max_wattage', -1, minval=-1)
 
         # Listen of important mmu events
-        self.mmu.printer.register_event_handler("mmu:enabled", self._handle_mmu_enabled)
         self.mmu.printer.register_event_handler("mmu:disabled", self._handle_mmu_disabled)
 
         # Register GCODE commands ---------------------------------------------------------------------------
         self.mmu.gcode.register_command('MMU_HEATER', self.cmd_MMU_HEATER, desc=self.cmd_MMU_HEATER_help)
 
         self._periodic_timer = self.mmu.reactor.register_timer(self._check_mmu_environment)
+        self._drying = False
+        self._drying_temp = None
+        self._drying_humidty_target = None
+        self._drying_start_time = self._drying_end_time = None
 
 
     #
@@ -96,28 +99,11 @@ class MmuEnvironmentManager:
     # Mmu Heater manager public access...
     #
 
-    def is_active(self):
+    def is_drying(self):
         """
-        Returns whether the MMU heater is currently active (drying filament)
+        Returns whether the MMU heater is currently in drying cycle
         """
-        return self.active
-
-
-    def get_mmu_heater_string(self, state=None, detail=False):
-        # TODO
-        return "drying @ 65 degree max"
-
-
-    def activate_heater(self, eventtime):
-        if not self.active:
-            self.active = True
-            self.mmu.log_info("MMU Heater is activated")
-
-
-    def deactivate_heater(self, eventtime):
-        if self.active:
-            self.active = False
-            self.mmu.log_info("MMU Heater deactivated")
+        return self._drying
 
 
     def has_heater(self):
@@ -135,11 +121,11 @@ class MmuEnvironmentManager:
     cmd_MMU_HEATER_help = "Enable/disable MMU heater (filament dryer)"
     cmd_MMU_HEATER_param_help = (
         "MMU_HEATER: %s\n" % cmd_MMU_HEATER_help
-        + "DRY = [1|0] enable/disable filament heater for filament drying cycle\n"
-        + "TEMP = \n"
-        + "TIME = \n"
-        + "HUMIDITY = \n"
         + "OFF = 1 \n"
+        + "DRY = [1|0] enable/disable filament heater for filament drying cycle\n"
+        + "TIME = \n"
+        + "TEMP = \n"
+        + "HUMIDITY = \n"
         + "[GATES = x,y] Gate to dry if MMU has individual spool heaters/dryers\n"
         + "(no parameters for status report)"
     )
@@ -151,47 +137,90 @@ class MmuEnvironmentManager:
             self.mmu.log_always(self.mmu.format_help(self.cmd_MMU_HEATER_param_help), color=True)
             return
 
+        off = gcmd.get_int('OFF', None, minval=0, maxval=1)
         dry = gcmd.get_int('DRY', None, minval=0, maxval=1)
-        timer = gcmd.get_int('TIMER', 60, above=0)
-
-        # Just report status
-        if self.active:
-            msg = "MMU Heater is dring ... TODO"
-            self.mmu.log_always(msg)
+        time = gcmd.get_int('TIME', self.heater_default_dry_time, minval=0)
+        temp = gcmd.get_float('TEMP', None, minval=0., maxval=100.)
+        humidity = gcmd.get_int('HUMIDTY', self.heater_default_humidity, minval=0)
+        gates = gcmd.get('GATES', "!")
+        if gates != "!":
+            gatelist = []
+            # Supplied list of gates
+            try:
+                for gate in gates.split(','):
+                    gate = int(gate)
+                    if 0 <= gate < self.num_gates:
+                        gatelist.append(gate)
+            except ValueError:
+                raise gcmd.error("Invalid GATES parameter: %s" % gates)
         else:
-            self.mmu.log_always("MMU Heater is not active")
+            # Default to non empty gates
+            gates = [
+                i for i, status in enumerate(self.mmu.gate_status)
+                if status != self.mmu.GATE_EMPTY
+            ]
 
-# MMU_HEATER .. status
-# MMU_HEATER TEMP=xx
-# MMU_HEATER OFF=1
-# MMU_HEATER DRY=1 TIME=60 HUMIDITY=xx
-# MMU_HEATER DRY=1 TIME=60 HUMIDITY=xx TEMP=xx
-# MMU_HEATER [GATES=4,5,6]
-# SET_HEATER_TEMPERATURE HEATER=<heater_name> [TARGET=<target_temperature>]
+
+        if off or temp == 0:
+            self._stop_drying_cycle()
+            self._heater_off()
+            return
+
+        if not dry and temp is not None:
+            self._heater_on()
+            if self._drying:
+                self._drying_temp = temp
+            return
+
+        def _format_minutes(minutes):
+            hours, mins = divmod(minutes, 60)
+            parts = []
+            if hours:
+                parts.append("%d hour%s" % (hours, "" if hours == 1 else "s"))
+            if mins or hours:
+                parts.append("%d minute%s" % (mins, "" if mins == 1 else "s"))
+            return " ".join(parts)
+
+
+        if dry:
+            temp = self.heater_default_dry_temp
+            # Reduce heat to lowest filament temp in "gates" and log that fact
+
+            # Initiate dryer, record current time, record time, humidity and temp
+            self._drying_time = time
+            self._drying_temp = temp
+            self._drying_humidity_target = humidity
+            self._drying_start_time = self.mmu.reactor.monotonic()
+            self._drying_end_time = self._drying_start_time + self._drying_time * 60
+
+            self._start_drying_cycle()
+
+            msg = "MMU filament drying cycle started:"
+
+        elif self._drying:
+            msg = "MMU is in filament drying cycle:"
+        else:
+            msg = "TODO Not drying cycle but heater is ... OR off"
+
+        if self._drying:
+            remaining_mins = _format_minutes((self._drying_end_time - self.mmu.reactor.monotonic()) // 60)
+            msg += "\nCycle time: %s (reamining: %s)" % (_format_minutes(self._drying_time), remaining_mins)
+            msg += "\nTarget humidy: %.1f%%" % self._drying_humidity_target
+            msg += "\nDrying temp: %.1f°C" % self._drying_temp
+
+        # Report status
+        self.mmu.log_always(msg)
 
 
     def get_status(self, eventtime=None):
         return {
-            'heater': self.active
+            'drying_filament': self._drying
         }
 
 
     #
     # Internal implementation --------------------------------------------------
     #
-
-    def _handle_mmu_enabled(self, eventtime=None):
-        """
-        Event indicating that the MMU unit was enabled
-        """
-        if self.mmu.is_enabled: return
-        if eventtime is None: eventtime = self.mmu.reactor.monotonic()
-
-        # PAUL TODO setup heater monitor
-        self.mmu.log_warning("PAUL mmu_environment_manager: _handle_mmu_enabled()")
-
-        self.mmu.reactor.update_timer(self._periodic_timer, self.mmu.reactor.NOW)
-
 
     def _handle_mmu_disabled(self, eventtime=None):
         """
@@ -200,10 +229,9 @@ class MmuEnvironmentManager:
         if not self.mmu.is_enabled: return
         if eventtime is None: eventtime = self.mmu.reactor.monotonic()
 
-        # PAUL TODO kill heater monitor
         self.mmu.log_warning("PAUL mmu_environment_manager: _handle_mmu_disabled()")
-
-        self.mmu.reactor.update_timer(self._periodic_timer, self.mmu.reactor.NEVER)
+        self._stop_drying_cycle()
+        self._heater_off()
 
     def _check_mmu_environment(self, eventtime):
         """
@@ -214,3 +242,23 @@ class MmuEnvironmentManager:
 
         # Reschedule
         return eventtime + self.CHECK_INTERVAL
+
+    def _start_drying_cycle(self):
+        if not self._drying:
+            self.mmu.log_info("MmuEnvironemntManager: Filament drying started")
+            self._heater_on(self._drying_temp)
+            self.mmu.reactor.update_timer(self._periodic_timer, self.mmu.reactor.NOW)
+            self._drying = True
+
+    def _stop_drying_cycle(self):
+        if self._drying:
+            self.mmu.log_info("MmuEnvironemntManager: Filament drying stopped")
+            self.mmu.reactor.update_timer(self._periodic_timer, self.mmu.reactor.NEVER)
+            self._heater_off()
+            self._drying = False
+
+    def _heater_on(self, temp):
+        self.mmu.log_warning("PAUL HEATER ON, TEMP=%s" % temp)
+
+    def _heater_off(self):
+        self.mmu.log_warning("PAUL HEATER OFF")
