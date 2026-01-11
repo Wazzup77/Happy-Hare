@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Happy Hare MMU Software
 #
-# Copyright (C) 2022-2025  moggieuk#6538 (discord)
+# Copyright (C) 2022-2026  moggieuk#6538 (discord)
 #                          moggieuk@hotmail.com
 #
 # Goal: Manager class to handle sync-feedback and adjustment of gear stepper rotation distance
@@ -12,6 +12,11 @@
 #
 # Autotune: An autotuning option can be enabled for dynamic tuning (and persistence) of
 #           calibrated MMU gear rotation_distance.
+#
+# Implements commands:
+#   MMU_SYNC_FEEDBACK
+#   MMU_FLOWGUARD
+#
 #
 # (\_/)
 # ( *,*)
@@ -36,6 +41,7 @@ class MmuSyncFeedbackManager:
     
     def __init__(self, mmu):
         self.mmu = mmu
+        self.mmu.managers.append(self)
 
         self.estimated_state = float(self.SF_STATE_NEUTRAL)
         self.active = False           # Sync-feedback actively operating?

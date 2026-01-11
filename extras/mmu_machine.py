@@ -10,7 +10,7 @@
 #   - extruder endstops and extruder only homing
 #   - switchable drive steppers on rails
 #
-# Copyright (C) 2022-2025  moggieuk#6538 (discord)
+# Copyright (C) 2022-2026  moggieuk#6538 (discord)
 #                          moggieuk@hotmail.com
 #
 # Based on code by Kevin O'Connor <kevin@koconnor.net>
@@ -260,7 +260,14 @@ class MmuMachine:
 
         # Other attributes
         self.display_name = config.get('display_name', UNIT_ALT_DISPLAY_NAMES.get(self.mmu_vendor, self.mmu_vendor))
-        self.environment_sensor = config.get('environment_sensor', "")
+        self.environment_sensor = list(config.getlist('environment_sensor', [])) # PAUL changed to list
+        l = len(self.environment_sensor)
+        if l not in [0, 1, self.num_gates]:
+            raise config.error("environment_sensor must be empty, a single value or a comma separated list of 'num_gate' elements")
+        self.filament_heater = list(config.getlist('filament_heater', [])) # PAUL
+        l = len(self.filament_heater)
+        if l not in [0, 1, self.num_gates]:
+            raise config.error("filament_heater must be empty, a single value or a comma separated list of 'num_gate' elements")
 
         # By default HH uses a modified homing extruder. Because this might have unknown consequences on certain
         # set-ups it can be disabled. If disabled, homing moves will still work, but the delay in mcu to mcu comms
@@ -332,7 +339,7 @@ class MmuMachine:
             unit_info['filament_always_gripped'] = self.filament_always_gripped
             unit_info['has_bypass'] = self.has_bypass
             unit_info['multi_gear'] = self.multigear
-            unit_info['environment_sensor'] = self.environment_sensor
+            unit_info['environment_sensor'] = self.environment_sensor[0] if self.environment_sensor else ""
             gate_count += unit
             self.unit_status["unit_%d" % i] = unit_info
             self.unit_status['num_units'] = len(self.gate_counts)

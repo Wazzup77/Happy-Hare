@@ -19,7 +19,7 @@
 #           calibrated MMU gear rotation_distance.
 #
 #
-# Copyright (C) 2022-2025  moggieuk#6538 (discord)
+# Copyright (C) 2022-2026  moggieuk#6538 (discord)
 #                          moggieuk@hotmail.com
 #
 # (\_/)

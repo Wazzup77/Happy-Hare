@@ -6,7 +6,7 @@
 # For simplicity of setup it is assumed that all pins are of the same type/config per mmu_unit.
 # Control is via direct control or klipper events.
 #
-# Copyright (C) 2022-2025  moggieuk#6538 (discord)
+# Copyright (C) 2022-2026  moggieuk#6538 (discord)
 #                          moggieuk@hotmail.com
 #
 # (\_/)

@@ -1,5 +1,9 @@
 # Happy Hare MMU Software
-# Implementation of various selector variations:
+#
+# Copyright (C) 2022-2026  moggieuk#6538 (discord)
+#                          moggieuk@hotmail.com
+#
+# Goal: Implementation of various selector variations:
 #
 # VirtualSelector:
 #  Implements selector for type-B MMU's with gear driver per gate
@@ -38,8 +42,13 @@
 # - Stepper based Selector for ViViD with per-gate index sensors
 #
 #
-# Copyright (C) 2022-2025  moggieuk#6538 (discord)
-#                          moggieuk@hotmail.com
+# Implements commands (selector dependent):
+#    MMU_CALIBRATE_SELECTOR
+#    MMU_SOAKTEST_SELECTOR
+#    MMU_SERVO
+#    MMU_GRIP
+#    MMU_RELEASE
+#
 #
 # (\_/)
 # ( *,*)
@@ -68,6 +77,7 @@ class BaseSelector:
 
     def __init__(self, mmu):
         self.mmu = mmu
+        self.mmu.managers.append(self)
         self.is_homed = False
         self.mmu_unit = 0
 
@@ -694,7 +704,7 @@ class LinearSelector(BaseSelector, object):
 
     def _home_selector(self):
         self.mmu.unselect_gate()
-        self.filament_hold_move() # PAUL self.servo.servo_move()
+        self.filament_hold_move()
         self.mmu.movequeues_wait()
         try:
             homing_state = mmu_machine.MmuHoming(self.mmu.printer, self.mmu_toolhead)

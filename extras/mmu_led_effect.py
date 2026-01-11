@@ -3,7 +3,7 @@
 # as well as on each individual LED for per-gate effects. This relies on the [mmu_leds] section
 # for each mmu_unit
 #
-# Copyright (C) 2022-2025  moggieuk#6538 (discord)
+# Copyright (C) 2022-2026  moggieuk#6538 (discord)
 #                          moggieuk@hotmail.com
 #
 # (\_/)

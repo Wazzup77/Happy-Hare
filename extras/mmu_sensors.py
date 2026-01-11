@@ -23,7 +23,7 @@
 #   Creates buttons handlers (with filament_switch_sensor for visibility and control) and publishes events based on state change
 #   Named `sync_feedback_compression` & `sync_feedback_tension`
 #
-# Copyright (C) 2022-2025  moggieuk#6538 (discord)
+# Copyright (C) 2022-2026  moggieuk#6538 (discord)
 #                          moggieuk@hotmail.com
 #
 # RunoutHelper based on:

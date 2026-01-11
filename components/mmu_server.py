@@ -1,7 +1,7 @@
 # Happy Hare MMU Software
 # Moonraker support for a file-preprocessor that injects MMU metadata into gcode files
 #
-# Copyright (C) 2022-2025  moggieuk#6538 (discord)
+# Copyright (C) 2022-2026  moggieuk#6538 (discord)
 #                          moggieuk@hotmail.com
 #
 # Original slicer parsing

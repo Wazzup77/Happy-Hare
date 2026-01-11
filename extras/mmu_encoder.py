@@ -1,7 +1,7 @@
 # Happy Hare MMU Software
 # Driver for encoder that supports movement measurement, runout/clog detection and flow rate calc
 #
-# Copyright (C) 2022-2025  moggieuk#6538 (discord)
+# Copyright (C) 2022-2026  moggieuk#6538 (discord)
 #                          moggieuk@hotmail.com
 #
 # Based on:
