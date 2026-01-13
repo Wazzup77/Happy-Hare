@@ -260,14 +260,17 @@ class MmuMachine:
 
         # Other attributes
         self.display_name = config.get('display_name', UNIT_ALT_DISPLAY_NAMES.get(self.mmu_vendor, self.mmu_vendor))
-        self.environment_sensor = list(config.getlist('environment_sensor', [])) # PAUL changed to list
-        l = len(self.environment_sensor)
-        if l not in [0, 1, self.num_gates]:
-            raise config.error("environment_sensor must be empty, a single value or a comma separated list of 'num_gate' elements")
-        self.filament_heater = list(config.getlist('filament_heater', [])) # PAUL
-        l = len(self.filament_heater)
-        if l not in [0, 1, self.num_gates]:
-            raise config.error("filament_heater must be empty, a single value or a comma separated list of 'num_gate' elements")
+
+        self.environment_sensor = config.get('environment_sensor', '')
+        self.filament_heater = config.get('filament_heater', '')
+
+        # Special handling for EMU MMU's that can have a heater and environment sensor per gate
+        self.environment_sensors = list(config.getlist('environment_sensors', []))
+        if len(self.environment_sensors) not in [0, self.num_gates]:
+            raise config.error("'environment_sensors' must be empty or a comma separated list of 'num_gate' elements")
+        self.filament_heaters = list(config.getlist('filament_heaters', []))
+        if len(self.filament_heaters) not in [0, self.num_gates]:
+            raise config.error("'filament_heaters' must be empty, a single value or a comma separated list of 'num_gate' elements")
 
         # By default HH uses a modified homing extruder. Because this might have unknown consequences on certain
         # set-ups it can be disabled. If disabled, homing moves will still work, but the delay in mcu to mcu comms
