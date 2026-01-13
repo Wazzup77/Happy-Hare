@@ -1,2 +1,4 @@
 my_*.cfg
 .DS_Store
+benchmark_full_chain.py
+benchmark_callbacks.py
