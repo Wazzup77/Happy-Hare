@@ -5524,12 +5524,12 @@ class Mmu:
 
             # assume we are in extruder
             before_extruder = False
-            if reported and self.has_toolhead_cutter and park_pos > self.toolhead_extruder_to_nozzle:
-                self.log_debug("park_pos (%.1fmm) is greater than 'toolhead_extruder_to_nozzle' distance of %.1fmm! Assuming cutter is located before extruder." % (park_pos, self.toolhead_extruder_to_nozzle))
+            if reported and self.has_toolhead_cutter and self._is_cutter_before_extruder():
+                self.log_debug("park_pos (%.1fmm) indicates cutter is located before extruder (toolhead_extruder_to_nozzle is %.1fmm)." % (park_pos, self.toolhead_extruder_to_nozzle))
                 before_extruder = True
             elif not test:
-                # Important sanity checks to spot misconfiguration
-                if park_pos > self.toolhead_extruder_to_nozzle:
+                # Important sanity checks to spot misconfiguration; this may be dead with cutter before extruder support?
+                if park_pos > self.toolhead_extruder_to_nozzle and not self._is_cutter_before_extruder():
                     self.log_warning("Warning: park_pos (%.1fmm) cannot be greater than 'toolhead_extruder_to_nozzle' distance of %.1fmm! Assumming fully unloaded from extruder\nWill attempt to continue..." % (park_pos, self.toolhead_extruder_to_nozzle))
                     park_pos = self.toolhead_extruder_to_nozzle
                     filament_remaining = 0.
