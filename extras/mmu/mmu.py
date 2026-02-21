@@ -4670,6 +4670,17 @@ class Mmu:
             return ratio, deficit # For auto-calibration
         finally:
             self.bowden_start_pos = None
+   
+    # Return True if the cutter configuration indicates it is located before the extruder gears
+    def _is_cutter_before_extruder(self):
+        cut_tip_vars = self.printer.lookup_object("gcode_macro _MMU_CUT_TIP_VARS", None)
+        if cut_tip_vars:
+            try:
+                blade_pos = float(cut_tip_vars.variables.get('blade_pos', 0))
+                return blade_pos > self.toolhead_extruder_to_nozzle
+            except Exception:
+                pass
+        return False
 
     # Fast unload of filament from exit of extruder gear (end of bowden) to position close to MMU (gate_unload_buffer away)
     def _unload_bowden(self, length=None):
@@ -4682,6 +4693,13 @@ class Mmu:
 
         # Shorten move by gate buffer used to ensure we don't overshoot homing point
         length -= self.gate_unload_buffer
+        
+        cutter_before_extruder = self._is_cutter_before_extruder()
+
+        # If filament is already retracted into bowden tube (e.g. from cutting before extruder)
+        current_pos = -self._get_filament_position()
+        if cutter_before_extruder and current_pos > self.toolhead_extruder_to_nozzle:
+            length -= (current_pos - self.toolhead_extruder_to_nozzle)
 
         try:
             if length > 0:
@@ -4689,8 +4707,8 @@ class Mmu:
                 self._set_filament_direction(self.DIRECTION_UNLOAD)
                 self.selector.filament_drive()
 
-                # Optional pre-unload safety step
-                if (full and self.has_encoder() and self.bowden_pre_unload_test and
+                # Optional pre-unload safety step (skip if cutter is before extruder)
+                if (full and self.has_encoder() and self.bowden_pre_unload_test and not cutter_before_extruder and
                     self.sensor_manager.check_sensor(self.SENSOR_EXTRUDER_ENTRY) is not False and
                     self.sensor_manager.check_all_sensors_before(self.FILAMENT_POS_START_BOWDEN, self.gate_selected, loading=False) is not False
                 ):
