@@ -4894,7 +4894,6 @@ class Mmu:
             # short of deterministic sensors and test makes sense
             if (
                 self.gate_selected != self.TOOL_GATE_BYPASS
-                and length > self.encoder_min
                 and self._can_use_encoder()
                 and not fhomed
                 and not extruder_only

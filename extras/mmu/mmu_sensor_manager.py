@@ -39,7 +39,7 @@ class MmuSensorManager:
                 sensor_names.append(self.get_unit_sensor_name(self.mmu.SENSOR_GATE, i))
                 sensor_names.append(self.get_unit_sensor_name(self.mmu.SENSOR_TENSION, i))
                 sensor_names.append(self.get_unit_sensor_name(self.mmu.SENSOR_COMPRESSION, i))
-                sensor_names.append(self.get_unit_sensor_name(self.mmu.SENSOR_PROPORTIONAL, i)) 
+                sensor_names.append(self.get_unit_sensor_name(self.mmu.SENSOR_PROPORTIONAL, i))
         sensor_names.extend([
             self.mmu.SENSOR_EXTRUDER_ENTRY,
             self.mmu.SENSOR_TOOLHEAD
@@ -152,7 +152,7 @@ class MmuSensorManager:
         return "unit_%d_%s" % (unit, name) # Must match mmu_sensors
 
     def get_unitless_sensor_name(self, name):
-        return re.sub(r'unit_\d+_', '', name) 
+        return re.sub(r'unit_\d+_', '', name)
 
     # Get unit or gate specific endstop if it exists
     # Take generic name and look for "<unit>_genericName" and "genericName_<gate>"
@@ -223,6 +223,14 @@ class MmuSensorManager:
         if all(state is None for state in sensors.values()):
             return None
         return any(state is True for state in sensors.values())
+
+    # Returns True if all sensors in current filament path are triggered
+    #         None if no sensors available (disambiguate from non-triggered sensor)
+    def check_all_sensors_in_path(self):
+        sensors = self._get_sensors_before(self.mmu.FILAMENT_POS_LOADED, self.mmu.gate_selected)
+        if all(state is None for state in sensors.values()):
+            return None
+        return all(state is not False for state in sensors.values())
 
     # Returns True is any sensors in current filament path are triggered (EXCLUDES pre-gate)
     #         None if no sensors available (disambiguate from non-triggered sensor)
