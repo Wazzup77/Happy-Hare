@@ -31,7 +31,8 @@ class MmuSensorManager:
         sensor_names.extend([
             self.mmu.SENSOR_GATE,
             self.mmu.SENSOR_TENSION,
-            self.mmu.SENSOR_COMPRESSION
+            self.mmu.SENSOR_COMPRESSION,
+            self.mmu.SENSOR_PROPORTIONAL
         ])
         if self.mmu.mmu_machine.num_units > 1:
             for i in range(self.mmu.mmu_machine.num_units):
@@ -105,6 +106,7 @@ class MmuSensorManager:
             self.mmu.SENSOR_GATE: self.get_mapped_endstop_name(self.mmu.SENSOR_GATE),
             self.mmu.SENSOR_COMPRESSION: self.get_mapped_endstop_name(self.mmu.SENSOR_COMPRESSION),
             self.mmu.SENSOR_TENSION: self.get_mapped_endstop_name(self.mmu.SENSOR_TENSION),
+            self.mmu.SENSOR_PROPORTIONAL: self.get_mapped_endstop_name(self.mmu.SENSOR_PROPORTIONAL),
             self.mmu.SENSOR_EXTRUDER_ENTRY: self.mmu.SENSOR_EXTRUDER_ENTRY,
             self.mmu.SENSOR_TOOLHEAD: self.mmu.SENSOR_TOOLHEAD
         }
@@ -131,10 +133,10 @@ class MmuSensorManager:
 
     # Return dict of all sensor states (or None if sensor disabled)
     def get_all_sensors(self, inactive=False):
-        result = {}
+        names = {}
         for name, sensor in self.sensors.items() if not inactive else self.all_sensors.items():
-            result[name] = bool(sensor.runout_helper.filament_present) if sensor.runout_helper.sensor_enabled else None
-        return result
+            names[name] = bool(sensor.runout_helper.filament_present) if sensor.runout_helper.sensor_enabled else None
+        return names
 
     def has_sensor(self, name):
         return self.sensors[name].runout_helper.sensor_enabled if name in self.sensors else False
@@ -186,7 +188,7 @@ class MmuSensorManager:
     #         None if NO sensors available (disambiguate from non-triggered sensor)
     # Can be used as a "filament continuity test"
     def check_all_sensors_before(self, pos, gate, loading=True):
-        sensors = self._get_sensors_before(pos, gate, loading)
+        sensors = self.get_sensors_before(pos, gate, loading)
         if all(state is None for state in sensors.values()):
             return None
         return all(state is not False for state in sensors.values())
@@ -195,7 +197,7 @@ class MmuSensorManager:
     #         None if NO sensors available (disambiguate from non-triggered sensor)
     # Can be used as a filament visibility test over a portion of the travel
     def check_any_sensors_before(self, pos, gate, loading=True):
-        sensors = self._get_sensors_before(pos, gate, loading)
+        sensors = self.get_sensors_before(pos, gate, loading)
         if all(state is None for state in sensors.values()):
             return None
         return any(state is True for state in sensors.values())
@@ -204,7 +206,7 @@ class MmuSensorManager:
     #         None if NO sensors available (disambiguate from non-triggered sensor)
     # Can be used as a "filament continuity test"
     def check_all_sensors_after(self, pos, gate, loading=True):
-        sensors = self._get_sensors_after(pos, gate, loading)
+        sensors = self.get_sensors_after(pos, gate, loading)
         if all(state is None for state in sensors.values()):
             return None
         return all(state is not False for state in sensors.values())
@@ -213,7 +215,7 @@ class MmuSensorManager:
     #         None if no sensors available (disambiguate from non-triggered sensor)
     # Can be used to validate position
     def check_any_sensors_after(self, pos, gate, loading=True):
-        sensors = self._get_sensors_after(pos, gate, loading)
+        sensors = self.get_sensors_after(pos, gate, loading)
         if all(state is None for state in sensors.values()):
             return None
         return any(state is True for state in sensors.values())
@@ -287,13 +289,13 @@ class MmuSensorManager:
                     result[name] = bool(sensor.runout_helper.filament_present) if sensor.runout_helper.sensor_enabled else None
         return result # TODO handle bypass and return only EXTRUDER_ENTRY and TOOLHEAD sensors
 
-    def _get_sensors_before(self, pos, gate, loading=True):
+    def get_sensors_before(self, pos, gate, loading=True):
         return self._get_sensors(pos, gate, lambda p, pc: pc is None or (loading and p >= pc) or (not loading and p > pc))
 
-    def _get_sensors_after(self, pos, gate, loading=True):
+    def get_sensors_after(self, pos, gate, loading=True):
         return self._get_sensors(pos, gate, lambda p, pc: pc is not None and ((loading and p < pc) or (not loading and p <= pc)))
 
-    def _get_all_sensors_for_gate(self,  gate):
+    def get_all_sensors_for_gate(self,  gate):
         return self._get_sensors(-1, gate, lambda p, pc: pc is not None)
 
     def get_status(self):
