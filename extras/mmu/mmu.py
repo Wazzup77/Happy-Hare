@@ -2129,6 +2129,7 @@ class Mmu:
 
         if config:
             self.calibrated_bowden_length = self.calibration_manager.get_bowden_length() # Temp scalar pulled from list for _f_calc()
+            cutter_before_extruder = self.has_toolhead_cutter and self._is_cutter_before_extruder()
             msg += "\n\nLOAD SEQUENCE:"
 
             # Gate loading
@@ -2204,7 +2205,22 @@ class Mmu:
             msg += "\n\nUNLOAD SEQUENCE:"
 
             # Tip forming
-            if self.force_form_tip_standalone:
+            if self.has_toolhead_cutter:
+                cut_tip_vars = self.printer.lookup_object("gcode_macro _MMU_CUT_TIP_VARS", None)
+                if cut_tip_vars:
+                    try:
+                        blade_pos = float(cut_tip_vars.variables.get('blade_pos', 0))
+                        retract_length = float(cut_tip_vars.variables.get('retract_length', 0))
+                        pushback_length = float(cut_tip_vars.variables.get('pushback_length', 0))
+                        if cutter_before_extruder:
+                            msg += "\n- Filament is cut by Happy Hare using '%s' macro with blade configured at %.1fmm before the extruder. (Retract: %.1fmm, Pushback: %.1fmm)" % (self.form_tip_macro, blade_pos, retract_length, pushback_length)
+                        else:
+                            msg += "\n- Filament is cut by Happy Hare using '%s' macro with blade configured %.1fmm after the extruder. (Retract: %.1fmm, Pushback: %.1fmm)" % (self.form_tip_macro, blade_pos, retract_length, pushback_length)
+                    except Exception:
+                        pass
+                else:
+                    msg += "\n- Filament is cut by Happy Hare using '%s' macro" % self.form_tip_macro
+            elif self.force_form_tip_standalone:
                 if self.form_tip_macro:
                     msg += "\n- Tip is always formed by Happy Hare using '%s' macro after initial retract of %s with extruder current of %d%%" % (
                         self.form_tip_macro, self._f_calc("toolchange_retract"), self.extruder_form_tip_current)
@@ -2228,10 +2244,15 @@ class Mmu:
 
             # Bowden unloading
             if self.mmu_machine.require_bowden_move:
-                if self.has_encoder() and self.bowden_pre_unload_test and not self.sensor_manager.has_sensor(self.SENSOR_EXTRUDER_ENTRY):
-                    msg += "\n- Bowden is unloaded with a short %s validation move before %s fast move" % (self._f_calc("encoder_move_step_size"), self._f_calc("calibrated_bowden_length - gate_unload_buffer - encoder_move_step_size"))
+                current_pos = -self._get_filament_position()
+                bowden_calc = "calibrated_bowden_length - gate_unload_buffer"
+                if cutter_before_extruder and current_pos > self.toolhead_extruder_to_nozzle:
+                    bowden_calc += " - (-filament_pos - toolhead_extruder_to_nozzle)"
+
+                if self.has_encoder() and self.bowden_pre_unload_test and not self.sensor_manager.has_sensor(self.SENSOR_EXTRUDER_ENTRY) and not cutter_before_extruder:
+                    msg += "\n- Bowden is unloaded with a short %s validation move before %s fast move" % (self._f_calc("encoder_move_step_size"), self._f_calc(bowden_calc + " - encoder_move_step_size"))
                 else:
-                    msg += "\n- Bowden is unloaded with a fast %s move" % self._f_calc("calibrated_bowden_length - gate_unload_buffer")
+                    msg += "\n- Bowden is unloaded with a fast %s move" % self._f_calc(bowden_calc)
             else:
                 msg += "\n- No fast bowden move is required"
 
