@@ -4775,6 +4775,8 @@ class Mmu:
 
         if self.extruder_homing_endstop == self.SENSOR_EXTRUDER_NONE:
             homed = True
+            if self.has_toolhead_cutter and self._is_cutter_before_extruder():
+                self.log_warning("Warning: 'extruder_homing_endstop' is set to 'none'. This is highly recommended to be 'extruder' or 'collision' for reliable cutter-before-extruder configurations!")
 
         elif self.extruder_homing_endstop == self.SENSOR_EXTRUDER_COLLISION:
             if self.has_encoder():
@@ -4924,7 +4926,7 @@ class Mmu:
                 and not extruder_only
             ):
                 self.log_debug("Total measured movement: %.1fmm, total delta: %.1fmm" % (measured, delta))
-                if measured < self.encoder_min:
+                if length >= self.encoder_min and measured < self.encoder_min:
                     raise MmuError("Move to nozzle failed (encoder didn't sense any movement). Extruder may not have picked up filament or filament did not find homing sensor")
                 elif delta > length * (self.toolhead_move_error_tolerance / 100.):
                     self._set_filament_pos_state(self.FILAMENT_POS_IN_EXTRUDER)
@@ -5527,6 +5529,21 @@ class Mmu:
             if reported and self.has_toolhead_cutter and self._is_cutter_before_extruder():
                 self.log_debug("park_pos (%.1fmm) indicates cutter is located before extruder (toolhead_extruder_to_nozzle is %.1fmm)." % (park_pos, self.toolhead_extruder_to_nozzle))
                 before_extruder = True
+            if before_extruder:
+                cut_tip_vars = self.printer.lookup_object("gcode_macro _MMU_CUT_TIP_VARS", None)
+                if cut_tip_vars:
+                    try:
+                        blade_pos = float(cut_tip_vars.variables.get('blade_pos', 0))
+                        retract_length = float(cut_tip_vars.variables.get('retract_length', 0))
+                        if retract_length < (blade_pos - self.toolhead_extruder_to_nozzle):
+                            self.log_warning("Warning: 'retract_length' (%.1fmm) in mmu_cut_tip.cfg should be greater than the distance from the cutter to the extruder entrance (%.1fmm) for reliable pushback!" % (retract_length, blade_pos - self.toolhead_extruder_to_nozzle))
+                    except Exception:
+                        pass
+
+                if filament_remaining > self.toolhead_extruder_to_nozzle:
+                    self.log_debug("Clamping filament_remaining (%.1fmm) to toolhead_extruder_to_nozzle (%.1fmm) for cutter-before-extruder cut" % (filament_remaining, self.toolhead_extruder_to_nozzle))
+                    filament_remaining = self.toolhead_extruder_to_nozzle
+
             elif not test:
                 # Important sanity checks to spot misconfiguration; this may be dead with cutter before extruder support?
                 if park_pos > self.toolhead_extruder_to_nozzle and not self._is_cutter_before_extruder():
