@@ -44,9 +44,6 @@
 #
 import ast, logging
 
-# Happy Hare imports
-from ..mmu_machine         import VENDOR_VVD
-
 # MMU subcomponent clases
 from .mmu_shared           import *
 
@@ -393,8 +390,7 @@ class MmuEnvironmentManager:
                 return
 
             # Optional spool rotation (requires eSpooler and explicit gates)
-            # (BTT ViViD is allowed if not in print)
-            if rotate and not (self.mmu.has_espooler() or self.mmu.mmu_machine.mmu_vendor == VENDOR_VVD):
+            if rotate and not (self.mmu.has_espooler() or self.mmu.allow_drying_rotation):
                 self.mmu.log_warning("Rotation requested but eSpooler not fitted - ignoring")
                 rotate = 0
 
