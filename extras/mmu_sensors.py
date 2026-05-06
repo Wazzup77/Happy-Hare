@@ -591,7 +591,16 @@ class MmuAdcSwitchSensor(MmuAdcSensorBase):
             "MMU: MmuAdcSwitchSensor initialized: %s (id: %s)" % (self.name, id(self))
         )
 
-    def adc_callback(self, read_time, read_value):
+    def adc_callback(self, *args):
+        # Old klipper: adc_callback(read_time, read_value)
+        # New klipper: adc_callback(samples) where samples is a list of (read_time, read_value)
+        if len(args) == 1:
+            read_time, read_value = args[0][-1]
+        elif len(args) == 2:
+            read_time, read_value = args
+        else:
+            raise TypeError("adc_callback expected (read_time, read_value) or (samples), got %d args" % len(args))
+
         self.lastReadTime = read_time
         # Calculate resistance: R = R_pullup * val / (1 - val)
         # Handle open circuit case (val close to 1.0)
@@ -769,7 +778,16 @@ class MmuHallSensor(MmuAdcSensorBase):
             "MMU: MmuHallSensor initialized: %s (id: %s)" % (self.name, id(self))
         )
 
-    def adc_callback(self, read_time, read_value):
+    def adc_callback(self, *args):
+        # Old klipper: adc_callback(read_time, read_value)
+        # New klipper: adc_callback(samples) where samples is a list of (read_time, read_value)
+        if len(args) == 1:
+            read_time, read_value = args[0][-1]
+        elif len(args) == 2:
+            read_time, read_value = args
+        else:
+            raise TypeError("adc_callback expected (read_time, read_value) or (samples), got %d args" % len(args))
+
         self._val1 = read_value
         self.lastReadTime = read_time
 
@@ -794,7 +812,16 @@ class MmuHallSensor(MmuAdcSensorBase):
         if present:
             self.lastTriggerTime = read_time
 
-    def adc2_callback(self, read_time, read_value):
+    def adc2_callback(self, *args):
+        # Old klipper: adc2_callback(read_time, read_value)
+        # New klipper: adc2_callback(samples) where samples is a list of (read_time, read_value)
+        if len(args) == 1:
+            read_time, read_value = args[0][-1]
+        elif len(args) == 2:
+            read_time, read_value = args
+        else:
+            raise TypeError("adc2_callback expected (read_time, read_value) or (samples), got %d args" % len(args))
+
         self._val2 = read_value
         self.lastReadTime = read_time
 
