@@ -308,13 +308,23 @@ class MmuProportionalSensor:
         ppins = self.printer.lookup_object("pins")
         self.adc = ppins.setup_pin("adc", self._pin)
 
-        if hasattr(self.adc, "setup_minmax"):
+        if hasattr(self.adc, "setup_adc_sample"):
+            try:
+                # New klipper (>= v0.13.0-557)
+                self.adc.setup_adc_sample(self._report_time, self._sample_time, self._sample_count)
+                self.adc.setup_adc_callback(self._adc_callback)
+            except TypeError:
+                # A few versions of klipper had these signatures
+                self.adc.setup_adc_sample(self._sample_time, self._sample_count)
+                self.adc.setup_adc_callback(self._report_time, self._adc_callback)
+        elif hasattr(self.adc, "setup_minmax"):
             # Kalico and older klipper
             self.adc.setup_minmax(self._sample_time, self._sample_count)
+            self.adc.setup_adc_callback(self._report_time, self._adc_callback)
         else:
-            # New klipper
-            self.adc.setup_adc_sample(self._sample_time, self._sample_count)
-        self.adc.setup_adc_callback(self._report_time, self._adc_callback)
+            raise RuntimeError(
+                "Klipper version not compatible: mcu_adc missing 'setup_adc_sample' and 'setup_minmax'."
+            )
 
         # Attach runout_helper (no gcode actions; just enable/disable plumbing to remove UI nag)
         clog_gcode = "%s SENSOR=%s" % (CLOG_GCODE, name)
@@ -447,11 +457,23 @@ class MmuAdcSensorBase:
         if multi_use:
             ppins.allow_multi_use_pin(pin_name)
         mcu_adc = ppins.setup_pin("adc", pin_name)
-        if hasattr(mcu_adc, "setup_adc_sample"):  # newer Klipper versions
-            mcu_adc.setup_adc_sample(sample_time, sample_count)
-        else:  # older Klipper versions
+        if hasattr(mcu_adc, "setup_adc_sample"):
+            try:
+                # New klipper (>= v0.13.0-557)
+                mcu_adc.setup_adc_sample(report_time, sample_time, sample_count)
+                mcu_adc.setup_adc_callback(callback)
+            except TypeError:
+                # A few versions of klipper had these signatures
+                mcu_adc.setup_adc_sample(sample_time, sample_count)
+                mcu_adc.setup_adc_callback(report_time, callback)
+        elif hasattr(mcu_adc, "setup_minmax"):
+            # Kalico and older klipper
             mcu_adc.setup_minmax(sample_time, sample_count)
-        mcu_adc.setup_adc_callback(report_time, callback)
+            mcu_adc.setup_adc_callback(report_time, callback)
+        else:
+            raise RuntimeError(
+                "Klipper version not compatible: mcu_adc missing 'setup_adc_sample' and 'setup_minmax'."
+            )
         return mcu_adc
 
 
