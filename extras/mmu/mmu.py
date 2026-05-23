@@ -5921,7 +5921,7 @@ class Mmu:
 
             # Sensor sanity check
             if self.sensor_manager.check_all_sensors_before(self.FILAMENT_POS_HOMED_GATE, self.gate_selected, loading=False) is False:
-                sensors = self.sensor_manager.get_sensors_before(self.FILAMENT_POS_HOMED_GATE, self.gate_selected, loading=False)
+                sensors = self.sensor_manager._get_sensors_before(self.FILAMENT_POS_HOMED_GATE, self.gate_selected, loading=False)
                 malfunction = ", ".join(sorted(k for k, v in sensors.items() if v is False))
                 self.log_warning("Filament determined to be somewhere in bowden but the following sensors are unexpectedly not triggered: %s\nCheck for further sensor malfunction with MMU_SENSORS command. Also validate the correct gate is selected.\nRe-run MMU_RECOVER when ready" % malfunction)
 
