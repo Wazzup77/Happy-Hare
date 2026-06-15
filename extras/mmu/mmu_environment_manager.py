@@ -402,8 +402,11 @@ class MmuEnvironmentManager:
 
             if rotate:
                 for gate in gates:
-                    if self.mmu.gate_status[gate] != self.mmu.GATE_EMPTY:
-                        self.mmu.log_warning("Gate %d is not empty so cannot rotate (filament end must be removed from the gate and secured to the spool for rotation)" % gate)
+                    if not self._gate_rotatable(gate):
+                        if self.mmu.has_espooler():
+                            self.mmu.log_warning("Gate %d is not empty so cannot rotate (filament end must be removed from the gate and secured to the spool for rotation)" % gate)
+                        else:
+                            self.mmu.log_warning("Gate %d is empty so cannot rotate (filament must be loaded into the gate so the gear can grip and turn the spool)" % gate)
 
             # Per-gate recommended temps/times, plus overall notes
             per_gate_plan = self._get_drying_plan(gates)
@@ -739,7 +742,7 @@ class MmuEnvironmentManager:
                 gates_to_rotate = []
                 for gate in candidates:
                     try:
-                        if self.mmu.gate_status[gate] == self.mmu.GATE_EMPTY:
+                        if self._gate_rotatable(gate):
                             gates_to_rotate.append(gate)
                     except Exception:
                         pass
@@ -1049,6 +1052,16 @@ class MmuEnvironmentManager:
 
         return (temperature, humidity)
 
+
+    def _gate_rotatable(self, gate):
+        # Decide whether a gate's spool can be rotated for drying. The two rotation methods
+        # have opposite requirements:
+        #  - eSpooler drives the spool directly, so the gear must be clear of filament (gate EMPTY)
+        #  - The gear-motor method (allow_drying_rotation) turns the spool *through* the gear, so
+        #    the filament must be loaded/gripped at the gear (gate NOT empty)
+        if self.mmu.has_espooler():
+            return self.mmu.gate_status[gate] == self.mmu.GATE_EMPTY
+        return self.mmu.gate_status[gate] != self.mmu.GATE_EMPTY
 
     def _rotate_spools_in_gates(self, gates):
         """
