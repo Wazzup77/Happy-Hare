@@ -473,6 +473,8 @@ heater_vent_macro: _MMU_VENT		# Name of macro to periodicaly call during drying 
 heater_vent_interval: 0			# Interval in minutes to call heater_vent_macro during drying cycle, 0=disable venting
 heater_rotate_interval: 5		# Interval in minutes to rotate filament (requires eSpooler or allow_drying_rotation)
 allow_drying_rotation: 0		# Allow filament rotation during drying even without eSpooler, 0 = no rotation, 1 = rotate (uses gear motor per gate)
+heater_rotate_distance: 60		# Gear-motor rotation only: mm of filament travel per rotation step (~60mm is roughly a 45-60 deg spool nudge)
+heater_rotate_margin: 50		# Gear-motor rotation only: mm safety gap kept before the extruder end of the bowden so the tip is never over-fed
 
 # Drying data for MMU_HEATER DRY=1 command in form (material type is case insensitive):
 #   'filament_type': (temp, drying_time_mins)

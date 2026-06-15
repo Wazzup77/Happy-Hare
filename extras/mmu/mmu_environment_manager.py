@@ -52,6 +52,9 @@ class MmuEnvironmentManager:
 
     CHECK_INTERVAL = 30 # How often to check heater and environment sensors (seconds)
 
+    # Fallback forward-travel limit (mm) for gear-motor drying rotation when the gate's bowden is uncalibrated
+    UNCALIBRATED_ROTATE_MAX = 250.
+
     # Environment sensor chips with humidity
     ENV_SENSOR_CHIPS = ["bme280", "htu21d", "sht3x", "lm75", "aht10"]
 
@@ -74,6 +77,8 @@ class MmuEnvironmentManager:
         self.heater_vent_macro       = self.mmu.config.get(     'heater_vent_macro', '')
         self.heater_vent_interval    = self.mmu.config.getfloat('heater_vent_interval', 0, minval=0)
         self.heater_rotate_interval  = self.mmu.config.getfloat('heater_rotate_interval', 5, minval=1)
+        self.heater_rotate_distance  = self.mmu.config.getfloat('heater_rotate_distance', 60, above=0.) # mm of gear travel per rotation step (gear-motor rotation)
+        self.heater_rotate_margin    = self.mmu.config.getfloat('heater_rotate_margin', 50, minval=0.)  # mm safety gap kept before the extruder end of bowden
 
         # Build tuples of drying temp / drying time indexed by filament type
         drying_data_str = self.mmu.config.get('drying_data', {})
@@ -122,6 +127,10 @@ class MmuEnvironmentManager:
         self._rotate_enabled = False
         self.spools_to_rotate = [] # Queue of spools that we are rotating (one at a time)
 
+        # Gear-motor drying rotation state (allow_drying_rotation, no eSpooler): per-gate sweep tracking
+        self._rotate_offset = {} # gate -> current forward offset (mm) from the parked start position
+        self._rotate_dir = {}    # gate -> sweep direction (+1 advance toward bowden, -1 retract toward park)
+
 
     # Module has no ready/connect/disconnect lifecycle hooks
 
@@ -134,6 +143,8 @@ class MmuEnvironmentManager:
             self.heater_vent_macro       = gcmd.get(      'HEATER_VENT_MACRO', self.heater_vent_macro)
             self.heater_vent_interval    = gcmd.get_float('HEATER_VENT_INTERVAL', self.heater_vent_interval, minval=0)
             self.heater_rotate_interval  = gcmd.get_float('HEATER_ROTATE_INTERVAL', self.heater_rotate_interval, minval=0)
+            self.heater_rotate_distance  = gcmd.get_float('HEATER_ROTATE_DISTANCE', self.heater_rotate_distance, above=0.)
+            self.heater_rotate_margin    = gcmd.get_float('HEATER_ROTATE_MARGIN', self.heater_rotate_margin, minval=0.)
 
 
     def get_test_config(self):
@@ -146,6 +157,8 @@ class MmuEnvironmentManager:
             msg += "\nheater_vent_macro = %s" % self.heater_vent_macro
             msg += "\nheater_vent_interval = %.1f" % self.heater_vent_interval
             msg += "\nheater_rotate_interval = %.1f" % self.heater_rotate_interval
+            msg += "\nheater_rotate_distance = %.1f" % self.heater_rotate_distance
+            msg += "\nheater_rotate_margin = %.1f" % self.heater_rotate_margin
 
         return msg
 
@@ -457,6 +470,8 @@ class MmuEnvironmentManager:
 
             # Optional spool rotation state
             self.spools_to_rotate = []
+            self._rotate_offset = {} # Reset per-gate sweep tracking for gear-motor rotation
+            self._rotate_dir = {}
             self._rotate_enabled = bool(rotate)
             if self._rotate_enabled:
                 self._rotate_timer = rotate_interval * 60.0
@@ -576,18 +591,20 @@ class MmuEnvironmentManager:
                 )
             else:
                 if not self.heater_vent_macro:
-                    vent_reason = "heater_vent_macro not set"
+                    # Manual venting (no automated vent macro configured)
+                    msg += u"\nVenting is manual - ensure the box vent port is OPEN during drying for air exchange"
                 else:
-                    vent_reason = "heater_vent_interval is 0"
-                msg += u"\nVenting not operational (%s)" % vent_reason
+                    msg += u"\nVenting not operational (heater_vent_interval is 0)"
 
-            # Rotation status (eSpooler)
+            # Rotation status (eSpooler or gear-motor)
             if self._rotate_enabled:
-                msg += u"\nSpool rotation enabled (running every %s, next in %s)" % (
+                method = "eSpooler" if self.mmu.has_espooler() else "gear motor"
+                msg += u"\nSpool rotation enabled via %s (running every %s, next in %s)" % (
+                    method,
                     _format_minutes(self._drying_rotate_interval),
                     _format_minutes(max(self.CHECK_INTERVAL, self._rotate_timer) / 60),
                 )
-            elif self.mmu.has_espooler():
+            elif self.mmu.has_espooler() or self.mmu.allow_drying_rotation:
                 msg += u"\nSpool rotation not enabled"
 
         # Report status
@@ -771,6 +788,15 @@ class MmuEnvironmentManager:
         else:
             self._vent_timer = None
 
+        # Remind user to vent manually if there is no automated venting mechanism. Drying releases
+        # moisture from the filament into the box air; an open vent lets that humid air exchange with
+        # drier ambient air. A sealed box saturates and drying stalls (moisture re-condenses on cooldown).
+        if not self.heater_vent_macro:
+            self.mmu.log_always(
+                "ACTION REQUIRED: Open the box vent port now (e.g. the rubber plug at the rear of the Qidi Box)\n"
+                "so moisture-laden air can escape during drying. Keep it open until the cycle finishes."
+            )
+
         # Turn on heater or heaters depending on mode
         if not self._has_per_gate_heaters():
             # Single heater mode
@@ -885,6 +911,28 @@ class MmuEnvironmentManager:
             # Stop rotation
             self._rotate_timer = None
             self._rotate_enabled = False
+
+            # Return any gear-rotated spools to their parked position so the filament is left where
+            # the user placed it (gear-motor rotation only; eSpooler leaves the spool untouched)
+            if not self.mmu.has_espooler() and self.mmu.allow_drying_rotation and self._rotate_offset:
+                gate_selected = self.mmu.gate_selected
+                for gate, offset in list(self._rotate_offset.items()):
+                    if abs(offset) > 0.01:
+                        try:
+                            self.mmu.select_gate(gate)
+                            self.mmu.trace_filament_move("Returning spool to park after drying", -offset, motor="gear", wait=True)
+                        except Exception as e:
+                            self.mmu.log_debug("Error re-parking gate %d after drying rotation: %s" % (gate, str(e)))
+                self.mmu.select_gate(gate_selected)
+            self._rotate_offset = {}
+            self._rotate_dir = {}
+
+            # Remind user to reseal the box if venting was manual (no automated vent mechanism)
+            if not self.heater_vent_macro:
+                self.mmu.log_always(
+                    "ACTION: Drying stopped - once the box has cooled you can close the vent port to reseal it "
+                    "for dry storage (ideally with desiccant)."
+                )
 
 
     def _cancel_gates(self, gates, reason="cancelled"):
@@ -1068,7 +1116,7 @@ class MmuEnvironmentManager:
         Spool rotation for drying.
         If an eSpooler is fitted, use it. Otherwise (allow_drying_rotation), drive the gear motor
         per gate to rotate the spool - for MMUs that couple a shared gear stepper to gate selection
-        (e.g. ViViD, Qidi Box). Move the spools in the retract direction a small distance.
+        (e.g. ViViD, Qidi Box).
         """
         self.mmu.log_info("Rotating spools in gates: %s..." % ",".join(map(str, gates)))
         if self.mmu.has_espooler():
@@ -1081,9 +1129,54 @@ class MmuEnvironmentManager:
         if not self.mmu.is_in_print() and self.mmu.allow_drying_rotation:
             gate_selected = self.mmu.gate_selected
             for gate in gates:
-                self.mmu.select_gate(gate)
-                _,_,_,_ = self.mmu.trace_filament_move("Rotating spool for drying", -100, motor="gear", wait=True)
+                self._rotate_gear_step(gate)
             self.mmu.select_gate(gate_selected)
+
+    def _rotate_gear_step(self, gate):
+        """
+        Rotate the spool in 'gate' by one bounded step using the gear motor (no eSpooler).
+
+        The filament tip is swept back and forth between the parked start position (offset 0, where
+        the tip stays gripped in the gear) and a forward limit derived from the bowden length (where
+        the tip stays short of the extruder). Each step is a real net rotation so a fresh spool angle
+        is presented to the heat, while the tip can never be retracted out of the gear (tangle) nor
+        pushed into the extruder.
+
+        Rough rotation guide: a wound spool is ~100mm (empty hub) to ~200mm (full) in diameter, giving
+        a circumference of ~315-630mm. So one full turn is ~315-630mm of filament and 45-60 degrees is
+        ~40-105mm. A heater_rotate_distance of ~60mm is therefore a ~45-60 degree nudge on a typical spool.
+        """
+        step = self.heater_rotate_distance
+
+        # Forward travel limit: bowden length, less the gate park distance and a safety margin
+        bowden = self.mmu.bowden_lengths[gate] if gate < len(self.mmu.bowden_lengths) else -1
+        if bowden is None or bowden < 0:
+            bowden = self.UNCALIBRATED_ROTATE_MAX
+            self.mmu.log_warning("Gate %d bowden not calibrated - limiting drying rotation travel to %.0fmm" % (gate, bowden))
+        max_off = max(0., bowden - self.mmu.gate_parking_distance - self.heater_rotate_margin)
+
+        offset = self._rotate_offset.get(gate, 0.)
+        direction = self._rotate_dir.get(gate, 1)
+
+        # Bounce off the limits so the sweep reverses rather than over-travelling
+        target = offset + direction * step
+        if target >= max_off:
+            target = max_off
+            direction = -1
+        elif target <= 0.:
+            target = 0.
+            direction = 1
+        self._rotate_dir[gate] = direction
+
+        delta = target - offset
+        if abs(delta) < 0.01:
+            # Window too small to move usefully (e.g. very short bowden); skip rather than stall the gear
+            self.mmu.log_debug("Gate %d drying rotation window too small (max travel %.1fmm) - skipping" % (gate, max_off))
+            return
+
+        self.mmu.select_gate(gate)
+        self.mmu.trace_filament_move("Rotating spool for drying", delta, motor="gear", wait=True)
+        self._rotate_offset[gate] = target
 
 
     def _rotate_spool(self, gate):
