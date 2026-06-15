@@ -414,12 +414,21 @@ class MmuEnvironmentManager:
                 gates = full_gates # Default to all non empty gates
 
             if rotate:
-                for gate in gates:
-                    if not self._gate_rotatable(gate):
-                        if self.mmu.has_espooler():
+                if self.mmu.has_espooler():
+                    for gate in gates:
+                        if not self._gate_rotatable(gate):
                             self.mmu.log_warning("Gate %d is not empty so cannot rotate (filament end must be removed from the gate and secured to the spool for rotation)" % gate)
-                        else:
-                            self.mmu.log_warning("Gate %d is empty so cannot rotate (filament must be loaded into the gate so the gear can grip and turn the spool)" % gate)
+                else:
+                    # Gear-motor rotation. Recommended setup: remove the filament and secure the tip to
+                    # the spool (gate empty) so the gear rotates the spool directly with simple retract
+                    # moves. If a tip is still inserted in the gear we fall back to a bounded sweep.
+                    inserted = [g for g in gates if self.mmu.gate_status[g] != self.mmu.GATE_EMPTY]
+                    if inserted:
+                        self.mmu.log_warning(
+                            "Recommended: remove the filament from gate(s) %s and secure the tip to the spool before drying rotation,\n"
+                            "then the spool is rotated directly. A tip is still inserted, so a bounded back-and-forth sweep will be used to avoid ejecting it."
+                            % ",".join(map(str, inserted))
+                        )
 
             # Per-gate recommended temps/times, plus overall notes
             per_gate_plan = self._get_drying_plan(gates)
@@ -750,11 +759,15 @@ class MmuEnvironmentManager:
             self._rotate_timer -= self.CHECK_INTERVAL
 
             if self._rotate_timer < 0:
-                # Re-check EMPTY status at time of rotation (supports dynamic state changes)
+                # Re-check status at time of rotation (supports dynamic state changes)
                 if self._has_per_gate_heaters():
                     candidates = list(self._get_active_gates())
-                else:
+                elif self.mmu.has_espooler():
                     candidates = list(range(self.mmu.num_gates))
+                else:
+                    # Gear-motor rotation: only the explicitly-selected drying gates, so we don't
+                    # spin gates that have no spool fitted
+                    candidates = list(self._drying_gates)
 
                 gates_to_rotate = []
                 for gate in candidates:
@@ -1102,14 +1115,15 @@ class MmuEnvironmentManager:
 
 
     def _gate_rotatable(self, gate):
-        # Decide whether a gate's spool can be rotated for drying. The two rotation methods
-        # have opposite requirements:
+        # Decide whether a gate's spool can be rotated for drying.
         #  - eSpooler drives the spool directly, so the gear must be clear of filament (gate EMPTY)
-        #  - The gear-motor method (allow_drying_rotation) turns the spool *through* the gear, so
-        #    the filament must be loaded/gripped at the gear (gate NOT empty)
+        #  - Gear-motor rotation (allow_drying_rotation) works either way: with the filament removed
+        #    and the tip secured to the spool (gate EMPTY, recommended) the gear turns the spool
+        #    directly; with the tip still inserted (gate NOT empty) a bounded sweep is used instead.
+        #    So any gate is rotatable.
         if self.mmu.has_espooler():
             return self.mmu.gate_status[gate] == self.mmu.GATE_EMPTY
-        return self.mmu.gate_status[gate] != self.mmu.GATE_EMPTY
+        return True
 
     def _rotate_spools_in_gates(self, gates):
         """
@@ -1134,18 +1148,30 @@ class MmuEnvironmentManager:
 
     def _rotate_gear_step(self, gate):
         """
-        Rotate the spool in 'gate' by one bounded step using the gear motor (no eSpooler).
+        Rotate the spool in 'gate' by one step using the gear motor (no eSpooler).
 
-        The filament tip is swept back and forth between the parked start position (offset 0, where
-        the tip stays gripped in the gear) and a forward limit derived from the bowden length (where
-        the tip stays short of the extruder). Each step is a real net rotation so a fresh spool angle
-        is presented to the heat, while the tip can never be retracted out of the gear (tangle) nor
+        Recommended setup: the filament is removed and its tip secured to the spool, leaving the gate
+        empty. The gear then drives the spool directly (eSpooler-like) and we simply rotate in the
+        retract direction - there is no tip to eject.
+
+        Fallback (tip still inserted in the gear): sweep the tip back and forth between the parked start
+        position (offset 0, where the tip stays gripped) and a forward limit derived from the bowden
+        length (where the tip stays short of the extruder). Each step is a real net rotation presenting a
+        fresh spool angle to the heat, while the tip can never be retracted out of the gear (tangle) nor
         pushed into the extruder.
 
         Rough rotation guide: a wound spool is ~100mm (empty hub) to ~200mm (full) in diameter, giving
         a circumference of ~315-630mm. So one full turn is ~315-630mm of filament and 45-60 degrees is
         ~40-105mm. A heater_rotate_distance of ~60mm is therefore a ~45-60 degree nudge on a typical spool.
         """
+        # Recommended mode - gate empty (tip secured to spool): rotate the spool directly, retract only.
+        # No tip in the gear, so unbounded retract moves are safe.
+        if self.mmu.gate_status[gate] == self.mmu.GATE_EMPTY:
+            self.mmu.select_gate(gate)
+            self.mmu.trace_filament_move("Rotating spool for drying", -self.heater_rotate_distance, motor="gear", wait=True)
+            return
+
+        # Fallback mode - tip still inserted in the gear: use a bounded back-and-forth sweep
         step = self.heater_rotate_distance
 
         # Forward travel limit: bowden length, less the gate park distance and a safety margin
