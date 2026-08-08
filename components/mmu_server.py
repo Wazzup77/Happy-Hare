@@ -369,7 +369,7 @@ class MmuServer:
         response = await self.http_client.request(
             method="PATCH",
             url=f"{self.spoolman.spoolman_url}/v1/spool/{spool_id}",
-            body=json.dumps(data)
+            body=data
         )
         if response.status_code == 404:
             logging.error(f"'{self.spoolman.spoolman_url}/v1/spool/{spool_id}' not found")
@@ -394,7 +394,7 @@ class MmuServer:
         response = await self.http_client.request(
             method="PATCH",
             url=f"{self.spoolman.spoolman_url}/v1/spool/{spool_id}",
-            body=json.dumps(data)
+            body=data
         )
         if response.status_code == 404:
             logging.error(f"'{self.spoolman.spoolman_url}/v1/spool/{spool_id}' not found")
